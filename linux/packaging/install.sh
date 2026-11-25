@@ -26,15 +26,27 @@ python3 -c 'import ctypes.util, sys; sys.exit(0 if ctypes.util.find_library("pul
 if [ -n "$missing" ]; then echo "Cicada needs:$missing  (sudo apt install$missing)"; exit 1; fi
 # --check: only the checks above (an update runs the new version's before anything is replaced).
 [ "$1" = "--check" ] && exit 0
-rm -rf "$lib" && mkdir -p "$lib" "$bin" "$share/applications" "$share/icons/hicolor/scalable/apps"
-cp -R "$src/cicada" "$src/lproj" "$src/bin" "$lib/"
-[ -f "$src/sample.wav" ] && cp "$src/sample.wav" "$lib/"
+# The new tree is built beside the old one and swapped in, so a copy that fails (disk full) leaves
+# the installed version in place instead of nothing.
+new="$lib.new"; old="$lib.old"
+trap 'rm -rf "$new"' EXIT
+rm -rf "$new" "$old"
+mkdir -p "$new" "$bin" "$share/applications" "$share/icons/hicolor/scalable/apps"
+cp -R "$src/cicada" "$src/lproj" "$src/bin" "$new/"
+[ -f "$src/sample.wav" ] && cp "$src/sample.wav" "$new/"
 # 说话人识别: the voiceprint weights and libcicada-voice-<arch>.so (speakers.py looks for them here).
-for d in models lib; do [ -d "$src/$d" ] && cp -R "$src/$d" "$lib/"; done
-cp "$src/cicada.svg" "$lib/"  # the tray and window icon, by path
-cp "$src/VERSION" "$lib/"     # read by cicada/__init__.py
+for d in models lib; do [ -d "$src/$d" ] && cp -R "$src/$d" "$new/"; done
+cp "$src/cicada.svg" "$new/"  # the tray and window icon, by path
+cp "$src/VERSION" "$new/"     # read by cicada/__init__.py
+if [ -e "$lib" ]; then mv "$lib" "$old"; fi
+if ! mv "$new" "$lib"; then
+  [ -e "$old" ] && mv "$old" "$lib"
+  echo "Cicada could not be installed: the previous version was kept."; exit 1
+fi
+rm -rf "$old"
 ln -sf "$lib/bin/cicada" "$bin/cicada"
-sed "s|@BIN@|$lib/bin/cicada|" "$src/com.wquguru.cicada.desktop" > "$share/applications/com.wquguru.cicada.desktop"
+bin_esc="$(printf '%s' "$lib/bin/cicada" | sed 's/[\\|&]/\\&/g')"  # a $HOME with | or & must not be sed syntax
+sed "s|@BIN@|$bin_esc|" "$src/com.wquguru.cicada.desktop" > "$share/applications/com.wquguru.cicada.desktop"
 cp "$src/cicada.svg" "$share/icons/hicolor/scalable/apps/cicada.svg"
 gtk-update-icon-cache -q "$share/icons/hicolor" 2>/dev/null || true
 echo "Cicada installed: open it from the app grid (知了 / Cicada)."
