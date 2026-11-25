@@ -194,5 +194,68 @@ class Through(unittest.TestCase):
             proxy.opener(r).open(urllib.request.Request("https://zenmux.ai/"), timeout=2)
 
 
+class Redirects(unittest.TestCase):
+    """A key must not follow a redirect to another host or port (a custom AI service could send it anywhere)."""
+
+    def servers(self):
+        seen = {"other": [], "same": []}
+
+        class Other(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen["other"].append(dict(self.headers))
+                self.send_response(200)
+                self.send_header("Content-Length", "2")
+                self.end_headers()
+                self.wfile.write(b"ok")
+
+            def log_message(self, *a):
+                pass
+
+        other = http.server.HTTPServer(("127.0.0.1", 0), Other)
+
+        class First(Other):
+            def do_GET(self):
+                if self.path == "/same":
+                    seen["same"].append(dict(self.headers))
+                    self.send_response(200)
+                    self.send_header("Content-Length", "2")
+                    self.end_headers()
+                    self.wfile.write(b"ok")
+                    return
+                to = "http://127.0.0.1:%d/x" % other.server_port if self.path == "/away" else "/same"
+                self.send_response(302)
+                self.send_header("Location", to)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        first = http.server.HTTPServer(("127.0.0.1", 0), First)
+        for srv in (first, other):
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self.addCleanup(srv.server_close)
+            self.addCleanup(srv.shutdown)
+        return first, seen
+
+    def get(self, first, path):
+        req = urllib.request.Request("http://127.0.0.1:%d%s" % (first.server_port, path),
+                                     headers={"Authorization": "Bearer sk-secret", "X-Cicada-Signature": "sig", "X-Other": "kept"})
+        # A direct route: no environment or GNOME proxy gets in the way.
+        with proxy.opener(proxy.Route("direct")).open(req, timeout=5) as r:
+            self.assertEqual(b"ok", r.read())
+
+    def test_other_port_does_not_get_the_credentials(self):
+        first, seen = self.servers()
+        self.get(first, "/away")
+        h = {k.lower(): v for k, v in seen["other"][0].items()}
+        self.assertNotIn("authorization", h)
+        self.assertNotIn("x-cicada-signature", h)
+        self.assertEqual("kept", h["x-other"])
+
+    def test_same_origin_redirect_keeps_them(self):
+        first, seen = self.servers()
+        self.get(first, "/near")
+        h = {k.lower(): v for k, v in seen["same"][0].items()}
+        self.assertEqual("Bearer sk-secret", h["authorization"])
+
+
 if __name__ == "__main__":
     unittest.main()

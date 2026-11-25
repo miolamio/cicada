@@ -265,6 +265,26 @@ class _SocksHTTPS(urllib.request.HTTPSHandler):
         return self.do_open(_through(self.proxy, http.client.HTTPSConnection), req, context=self._context)
 
 
+def _origin(url: str) -> tuple:
+    u = urllib.parse.urlsplit(url)
+    return (u.scheme.lower(), (u.hostname or "").lower(), u.port or {"http": 80, "https": 443}.get(u.scheme.lower()))
+
+
+class _Redirects(urllib.request.HTTPRedirectHandler):
+    """urllib copies every request header to the redirect's target. A key or token (the AI service's
+    `Authorization`, the share server's device signature) must not follow a redirect to another
+    scheme, host or port: a custom service could send it anywhere."""
+    SECRET = ("authorization", "proxy-authorization", "cookie", "x-api-key", "x-cicada-")
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and _origin(req.full_url) != _origin(new.full_url):
+            for h in (new.headers, new.unredirected_hdrs):
+                for k in [k for k in h if k.lower().startswith(self.SECRET)]:
+                    del h[k]
+        return new
+
+
 _openers: dict = {}
 _said: list = [None]
 
@@ -274,13 +294,13 @@ def opener(r: Route):
     o = _openers.get(k)
     if o is None:
         if r.kind == "env":
-            o = urllib.request.build_opener()
+            o = urllib.request.build_opener(_Redirects)
         elif r.kind == "http":
-            o = urllib.request.build_opener(urllib.request.ProxyHandler({"http": r.url, "https": r.url}))
+            o = urllib.request.build_opener(urllib.request.ProxyHandler({"http": r.url, "https": r.url}), _Redirects)
         elif r.kind == "socks":
-            o = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SocksHTTP(r), _SocksHTTPS(r))
+            o = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SocksHTTP(r), _SocksHTTPS(r), _Redirects)
         else:
-            o = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            o = urllib.request.build_opener(urllib.request.ProxyHandler({}), _Redirects)
         _openers[k] = o
     return o
 
