@@ -10,6 +10,10 @@ on:
     paths: ["windows/**", "Resources/**/Localizable.strings", ".github/workflows/windows.yml"]
   workflow_dispatch:
 
+# Nothing here writes to the repository: checkout and artifact upload need read only.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest

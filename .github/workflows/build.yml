@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Nothing here writes to the repository: checkout and artifact upload need read only.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-26

@@ -17,6 +17,10 @@ on:
         type: boolean
         default: false
 
+# Nothing here writes to the repository: checkout and artifact upload need read only.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest

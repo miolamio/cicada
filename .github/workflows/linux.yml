@@ -13,6 +13,10 @@ on:
     paths: ["linux/**", "Resources/**/Localizable.strings", "VERSION", ".github/workflows/linux.yml"]
   workflow_dispatch:
 
+# Nothing here writes to the repository: checkout and artifact upload need read only.
+permissions:
+  contents: read
+
 jobs:
   # The voiceprint library for each architecture, on 22.04 so it loads on 22.04 and 24.04 (glibc).
   native:
