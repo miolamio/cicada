@@ -54,7 +54,8 @@ final class AudioRouter: @unchecked Sendable {
     func voiceSamples(from start: Double, to end: Double) -> [Float]? {
         queue.sync {
             let a = Int(((start - voiceStart) * 16000).rounded()), b = Int(((end - voiceStart) * 16000).rounded())
-            guard a >= 0, b > a, b <= voice.count + 1600 else { return nil }
+            // `b` may run a little past what is kept, `a` may not: the slice below would be inverted.
+            guard a >= 0, a < voice.count, b > a, b <= voice.count + 1600 else { return nil }
             // A voiceprint uses at most `Voiceprints.maxSeconds`; don't copy more.
             return Array(voice[a..<min(b, voice.count, a + Int(Voiceprints.maxSeconds * 16000))])
         }

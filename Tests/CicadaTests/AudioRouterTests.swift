@@ -41,4 +41,16 @@ private final class NullStream: RecognitionStream, @unchecked Sendable {
         // Older than the voice keeps: nothing rather than the wrong audio.
         #expect(router.voiceSamples(from: 10, to: 11) == nil)
     }
+
+    /// A result that starts just past the audio kept (within the slack allowed for its end) has no
+    /// samples: nil, not a trap on an inverted range.
+    @Test func voiceStartingPastWhatIsKept() {
+        let router = AudioRouter()
+        router.setVoiceCapture(true)
+        router.attach(NullStream())
+        router.push(second(0.5))
+        _ = router.fedSeconds()
+        #expect(router.voiceSamples(from: 0.5, to: 1.05)?.count == 8000)
+        #expect(router.voiceSamples(from: 1.02, to: 1.08) == nil)
+    }
 }
