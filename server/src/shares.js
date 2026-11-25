@@ -61,6 +61,8 @@ export async function create(request, env) {
   }
 
   const characters = JSON.stringify(doc).length;
+  // More than a whole day's allowance can never pass: say so instead of "try again later".
+  if (characters > REVIEW_CHARS_PER_DAY) return fail(413, "too_large");
   const wait = await limit(env, "review:" + who.device, REVIEW_CHARS_PER_DAY, 86400, characters);
   if (wait) return fail(429, "rate_limited", { retryAfter: wait });
   // The whole site's review budget a day (Jev is paid per token): past it, sharing waits rather
