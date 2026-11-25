@@ -67,4 +67,17 @@ struct ShareTests {
         let hits = [ShareHit(part: "lines", from: 2, to: 3, questions: ["credential"])]
         #expect(ShareHit.recordLines(hits, kept: kept) == [4, 5])
     }
+
+    /// Tokens and the device key are replaced whole and stay readable by this user only.
+    @Test func secretFilesAreReplacedWholeAndPrivate() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cicada-secret-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("share-device.json")
+        #expect(SecretFile.write(Data("first".utf8), to: file))
+        #expect(SecretFile.write(Data("second".utf8), to: file))
+        #expect(try Data(contentsOf: file) == Data("second".utf8))
+        let mode = try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["share-device.json"])
+    }
 }

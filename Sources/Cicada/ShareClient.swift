@@ -107,11 +107,25 @@ enum SecretFile {
         do {
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
-            if !fm.fileExists(atPath: file.path) {
-                guard fm.createFile(atPath: file.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { return false }
+            // Written whole beside the file, 0600 from the start, then renamed over it: a crash
+            // midway must not leave half a device key or manage token (the server keeps only
+            // their hashes, so a lost one can't be got back).
+            let tmp = dir.appendingPathComponent("." + file.lastPathComponent + "." + UUID().uuidString)
+            let fd = open(tmp.path, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+            guard fd >= 0 else { return false }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            do {
+                try handle.write(contentsOf: data)
+                try handle.synchronize()
+                try handle.close()
+            } catch {
+                try? fm.removeItem(at: tmp)
+                throw error
             }
-            try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            try data.write(to: file)
+            guard rename(tmp.path, file.path) == 0 else {
+                try? fm.removeItem(at: tmp)
+                return false
+            }
             var url = file
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
