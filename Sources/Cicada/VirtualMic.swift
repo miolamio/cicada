@@ -74,11 +74,23 @@ final class VirtualMicInstaller: ObservableObject {
             if verifyOnly { state = .idle; return }
             state = .installing
             try? await Task.sleep(nanoseconds: 200_000_000) // let "安装中" show before the dialog
-            let cmd = "/usr/sbin/installer -pkg " + shellQuote(pkg.path) + " -target / && " + Self.restartAudio
-            guard runPrivileged(cmd, prompt: L("\(appDisplayName)要安装虚拟麦克风，让会议里的人听到你的翻译。")) else { return }
+            guard runPrivileged(Self.installCommand(package: pkg.path), prompt: L("\(appDisplayName)要安装虚拟麦克风，让会议里的人听到你的翻译。")) else { return }
             state = .reloading
             await waitForDevice(onLoaded: onInstalled)
         }
+    }
+
+    /// What runs as root. The download sits in the user's temp folder, where anything running as
+    /// this user could swap it while the password prompt waits: root takes its own copy and checks
+    /// the pinned hash on that copy before installing it.
+    /// The copy goes under root's home, not $TMPDIR: the prompt's shell may inherit the user's own
+    /// temp folder, where the user could move root's folder aside. (`sha256` and `scratch` are
+    /// parameters for the tests.)
+    static func installCommand(package: String, sha256: String = packageSHA256, scratch: String = "/private/var/root") -> String {
+        "d=$(/usr/bin/mktemp -d " + shellQuote(scratch + "/cicada-pkg.XXXXXX") + ") && /bin/cp " + shellQuote(package) + " \"$d/p.pkg\""
+            + " && echo \"" + sha256 + "  $d/p.pkg\" | /usr/bin/shasum -a 256 -c - >/dev/null"
+            + " && /usr/sbin/installer -pkg \"$d/p.pkg\" -target /; s=$?; /bin/rm -rf \"$d\";"
+            + " [ $s -eq 0 ] && { " + restartAudio + "; }"
     }
 
     /// The driver is on disk but Core Audio hasn't loaded it: restart Core Audio only.
@@ -177,7 +189,7 @@ final class VirtualMicInstaller: ObservableObject {
         runTest()
     }
 
-    private func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+    private static func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     private func appleQuote(_ s: String) -> String {
         "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
