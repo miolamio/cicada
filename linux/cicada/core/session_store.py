@@ -16,6 +16,7 @@ from .support import Log, Paths, clock
 class SessionStore:
     def __init__(self):
         self._gate = threading.RLock()
+        self._write_gate = threading.Lock()  # one flush at a time: the timer's and end()'s must not interleave on a file
         self._sessions: dict = {}
         self._dirty: set = set()
         self._timer = None
@@ -336,23 +337,35 @@ class SessionStore:
             self._timer.start()
 
     def flush(self) -> None:
-        """Writes every changed record now."""
-        with self._gate:
-            writes = [(sid, self._sessions[sid].write()) for sid in self._dirty if sid in self._sessions]
-            self._dirty.clear()
-        for sid, text in writes:
-            try:
-                folder = self._folder(sid)
-                os.makedirs(folder, exist_ok=True)
-                tmp = os.path.join(folder, "session.json.tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write(text)
-                os.replace(tmp, os.path.join(folder, "session.json"))
-            except OSError as e:
-                Log.d("store: save failed %s" % type(e).__name__)
-                continue
-            for l in list(self._save_listeners):
-                l(sid)
+        """Writes every changed record now. A record that could not be written stays changed, so the
+        next flush tries it again."""
+        with self._write_gate:
+            with self._gate:
+                writes = [(sid, self._sessions[sid].write()) for sid in self._dirty if sid in self._sessions]
+                self._dirty.clear()
+            for sid, text in writes:
+                try:
+                    folder = self._folder(sid)
+                    os.makedirs(folder, exist_ok=True)
+                    # A name of its own, so a half-written file is never the one that gets renamed in.
+                    tmp = os.path.join(folder, "session.json.%d.tmp" % threading.get_ident())
+                    try:
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            f.write(text)
+                        os.replace(tmp, os.path.join(folder, "session.json"))
+                    except OSError:
+                        try:
+                            os.remove(tmp)
+                        except OSError:
+                            pass
+                        raise
+                except OSError as e:
+                    Log.d("store: save failed %s" % type(e).__name__)
+                    with self._gate:
+                        self._dirty.add(sid)
+                    continue
+                for l in list(self._save_listeners):
+                    l(sid)
 
 
 def default_title(at: datetime) -> str:

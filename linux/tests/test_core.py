@@ -273,6 +273,51 @@ class Records(Base):
         self.assertIsNone(jsonfmt.parse_object("not json"))
         self.assertEqual('"a\\u0001"', jsonfmt.write("a\x01"))
 
+    def test_store_flushes_are_one_at_a_time_and_a_failed_write_stays_dirty(self):
+        from unittest import mock
+        store = SessionStore()
+        s = store.begin(datetime(2026, 1, 1, 2, tzinfo=timezone.utc))
+        store._mutate(s.id, lambda x: x.lines.append(TranscriptLine(id="h1-1", t=1.0, src="你好", srcLang="zh-CN", dstLang="en")))
+        store.flush()
+        real_replace = os.replace
+        active, most, tmps = [0], [0], set()
+
+        def replace(a, b):
+            time.sleep(0.05)  # long enough for a second flush to arrive while this one is mid-write
+            tmps.add(a)
+            active[0] -= 1
+            return real_replace(a, b)
+
+        real_write = Session.write
+
+        def write(self):
+            active[0] += 1
+            most[0] = max(most[0], active[0])
+            return real_write(self)
+        # A flush snapshots, then writes: the snapshot and the write of two flushes must not overlap.
+        with mock.patch.object(os, "replace", replace), mock.patch.object(Session, "write", write):
+            def go():
+                with store._gate:
+                    store._dirty.add(s.id)
+                store.flush()
+            ts = [threading.Thread(target=go) for _ in range(3)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(1, most[0])
+        self.assertTrue(all(os.path.basename(t) != "session.json.tmp" for t in tmps))
+        self.assertIsNotNone(SessionStore().get(s.id))
+        # A write that fails leaves the record dirty and no temp file behind; the next flush saves it.
+        with store._gate:
+            store._dirty.add(s.id)
+        with mock.patch.object(os, "replace", side_effect=OSError("disk")):
+            store.flush()
+        self.assertIn(s.id, store._dirty)
+        self.assertEqual([], [n for n in os.listdir(store._folder(s.id)) if n.endswith(".tmp")])
+        store.flush()
+        self.assertNotIn(s.id, store._dirty)
+
     def test_store_saves_and_drops_empty_meetings(self):
         store = SessionStore()
         empty = store.begin(datetime(2026, 1, 1, 1, tzinfo=timezone.utc))
