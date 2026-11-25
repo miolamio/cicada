@@ -50,7 +50,16 @@ enum Updater {
             if let minimum = info?["LSMinimumSystemVersion"] as? String, !Self.runs(minimum) {
                 throw Failure(L("新版本需要 macOS \(minimum) 或更新版本"))
             }
-            try await run("/usr/bin/codesign", "--verify", "--deep", "--strict", newApp.path)
+            // The checksum comes from the same release as the zip, so it says nothing about who
+            // built it, and an ad-hoc signature verifies too: the signer has to be ours.
+            var verify = ["--verify", "--deep", "--strict"]
+            if let requirement = Self.requirement(team: Self.runningTeam()) { verify.append("-R=" + requirement) }
+            do {
+                try await run("/usr/bin/codesign", verify + [newApp.path])
+            } catch {
+                debugLog("update: signature check failed (\(verify.count > 3 ? "wrong signer or broken seal" : "broken seal"))")
+                throw Failure(L("下载的文件校验不通过"))
+            }
 
             let script = work.appendingPathComponent("swap.sh")
             try swapScript.write(to: script, atomically: true, encoding: .utf8)
@@ -63,6 +72,25 @@ enum Updater {
             throw error
         }
         NSApp.terminate(nil)
+    }
+
+    /// What an update must satisfy to replace an app signed by `team`: a Developer ID signature
+    /// from the same team. Nil for an ad-hoc build (releases before 1.11.0, dev builds), which has
+    /// no signer to hold the update to.
+    nonisolated static func requirement(team: String?) -> String? {
+        guard let team, !team.isEmpty, team.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
+        return "anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+    }
+
+    /// The team that signed the running app, nil when it is ad-hoc signed.
+    private static func runningTeam() -> String? {
+        var me: SecCode?
+        guard SecCodeCopySelf([], &me) == errSecSuccess, let me else { return nil }
+        var code: SecStaticCode?
+        guard SecCodeCopyStaticCode(me, [], &code) == errSecSuccess, let code else { return nil }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(code, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess else { return nil }
+        return (info as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
     }
 
     /// Waits for the app to quit, moves the old bundle aside (restoring it if the new one can't be
@@ -124,6 +152,10 @@ enum Updater {
     }
 
     private static func run(_ tool: String, _ arguments: String...) async throws {
+        try await run(tool, arguments)
+    }
+
+    private static func run(_ tool: String, _ arguments: [String]) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments

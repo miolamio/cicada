@@ -103,4 +103,12 @@ import Testing
         #expect(!Updater.runs("26.0", on: os))
         #expect(Updater.runs("14", on: os))
     }
+
+    /// An update has to come from the team that signed the running app; an ad-hoc build has none.
+    @Test func anUpdateMustBeSignedByTheSameTeam() {
+        #expect(Updater.requirement(team: "AB12CD34EF") == "anchor apple generic and certificate leaf[subject.OU] = \"AB12CD34EF\"")
+        #expect(Updater.requirement(team: nil) == nil)
+        #expect(Updater.requirement(team: "") == nil)
+        #expect(Updater.requirement(team: "X\" or anchor apple") == nil)
+    }
 }
